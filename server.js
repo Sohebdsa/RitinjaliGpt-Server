@@ -9,8 +9,8 @@ const { GEMINI_API_KEY, PORT = 5001 } = process.env;
 
 const PDF_PATH = process.env.PDF_PATH
   ? (path.isAbsolute(process.env.PDF_PATH)
-      ? process.env.PDF_PATH
-      : path.join(__dirname, process.env.PDF_PATH))
+    ? process.env.PDF_PATH
+    : path.join(__dirname, process.env.PDF_PATH))
   : path.join(__dirname, "manual", "Ritinjali_User_manual_v2.pdf");
 
 const app = express();
@@ -38,14 +38,12 @@ app.get("/", (req, res) => {
 });
 
 const GEMINI_MODELS = [
-  "gemini-2.5-flash",
   "gemini-1.5-flash",
-  "gemini-3.6-flash",
-  "gemini-3.5-flash-lite",
-  "gemini-3.5-flash",
+  "gemini-2.0-flash",
+  "gemini-1.5-pro",
 ];
 
-let activeModel = null;
+let activeModel = "gemini-1.5-flash";
 
 async function callGemini(systemPrompt, userPrompt) {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -55,7 +53,7 @@ async function callGemini(systemPrompt, userPrompt) {
     );
   }
 
-  const modelsToTry = activeModel ? [activeModel] : GEMINI_MODELS;
+  const modelsToTry = [activeModel, ...GEMINI_MODELS.filter((m) => m !== activeModel)];
 
   for (const model of modelsToTry) {
     const urls = [
