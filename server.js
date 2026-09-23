@@ -56,51 +56,39 @@ async function callGemini(systemPrompt, userPrompt) {
   const modelsToTry = [activeModel, ...GEMINI_MODELS.filter((m) => m !== activeModel)];
 
   for (const model of modelsToTry) {
-    const urls = [
-      `https://generativelanguage.googleapis.com/v1/models/${model}:generateContent?key=${apiKey}`,
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-    ];
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: systemPrompt }] },
+          contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+          generationConfig: { temperature: 0.2, maxOutputTokens: 1024 },
+        }),
+      });
 
-    for (const url of urls) {
-      const version = url.includes("/v1beta/") ? "v1beta" : "v1";
-      try {
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            system_instruction: { parts: [{ text: systemPrompt }] },
-            contents: [{ role: "user", parts: [{ text: userPrompt }] }],
-            generationConfig: { temperature: 0.2, maxOutputTokens: 1024 },
-          }),
-        });
-
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          const msg = err?.error?.message || `HTTP ${res.status}`;
-          if (res.status === 404 || res.status === 400) {
-            console.log(`Skipping ${model}: ${msg.substring(0, 80)}`);
-            break;
-          }
-          throw new Error(msg);
-        }
-
-        const data = await res.json();
-        const answer = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!answer) throw new Error("Empty response from Gemini");
-
-        if (!activeModel) {
-          activeModel = model;
-          console.log(`Active model: ${model} (${version})`);
-        }
-        return answer;
-      } catch (err) {
-        if (!err.message.startsWith("HTTP") && !err.message.includes("model")) throw err;
-        console.log(`Error with ${model}: ${err.message.substring(0, 80)}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const msg = err?.error?.message || `HTTP ${res.status}`;
+        console.error(`Gemini error for ${model} (${res.status}):`, msg);
+        continue;
       }
+
+      const data = await res.json();
+      const answer = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!answer) {
+        throw new Error("Empty response from Gemini");
+      }
+
+      activeModel = model;
+      return answer;
+    } catch (err) {
+      console.error(`Error calling ${model}:`, err.message);
     }
   }
 
-  throw new Error("No Gemini model available for this API key.");
+  throw new Error("Unable to get an answer from Gemini. Please check your API key and quota.");
 }
 
 // Lazy initialization — cached across warm serverless invocations
