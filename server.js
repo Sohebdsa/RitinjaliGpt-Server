@@ -17,7 +17,6 @@ if (!PDF_PATH) {
 
 const app = express();
 
-// Support comma-separated list of allowed origins e.g. "https://app.vercel.app,https://staging.vercel.app"
 const allowedOrigins = (FRONTEND_URL || "")
   .split(",")
   .map((o) => o.trim())
@@ -107,7 +106,21 @@ async function callGemini(systemPrompt, userPrompt) {
   );
 }
 
-app.get("/api/health", (req, res) => {
+// Lazy initialization — runs once on first request, cached for warm invocations
+let initialized = false;
+
+async function ensureInitialized() {
+  if (initialized) return;
+  console.log("Initializing: loading and indexing PDF...");
+  initSearch();
+  const chunks = await loadAndChunkPDF(PDF_PATH);
+  await indexChunks(chunks);
+  initialized = true;
+  console.log("Ready.");
+}
+
+app.get("/api/health", async (req, res) => {
+  await ensureInitialized();
   res.json({ status: "ok", port: PORT, model: activeModel || "detecting" });
 });
 
@@ -119,6 +132,8 @@ app.post("/api/chat", async (req, res) => {
   }
 
   try {
+    await ensureInitialized();
+
     const chunks = await searchChunks(question.trim(), 4);
     const context = chunks.join("\n\n---\n\n");
 
@@ -148,21 +163,17 @@ ${context}`;
   }
 });
 
-async function start() {
-  console.log("Starting Ritinjali Chatbot API...");
-
-  try {
-    initSearch();
-    const chunks = await loadAndChunkPDF(PDF_PATH);
-    await indexChunks(chunks);
-
+// Local development
+if (require.main === module) {
+  ensureInitialized().then(() => {
     app.listen(PORT, () => {
       console.log(`Server running on http://localhost:${PORT}`);
     });
-  } catch (err) {
+  }).catch((err) => {
     console.error("Failed to start:", err.message);
     process.exit(1);
-  }
+  });
 }
 
-start();
+// Vercel serverless export
+module.exports = app;
