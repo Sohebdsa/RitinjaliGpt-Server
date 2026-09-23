@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: ritinjali-chatbot-api
+    env: node
+    region: india 
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PDF_PATH
+        value: ./manual/Ritinjali_User_manual_v2.pdf
+      - key: GEMINI_API_KEY
+        sync: false  # set this manually in the Render dashboard
+      - key: FRONTEND_URL
+        sync: false  # set this to your Vercel app URL e.g. https://your-app.vercel.app
