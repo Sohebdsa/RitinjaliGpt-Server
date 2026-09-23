@@ -54,6 +54,7 @@ async function callGemini(systemPrompt, userPrompt) {
   }
 
   const modelsToTry = [activeModel, ...GEMINI_MODELS.filter((m) => m !== activeModel)];
+  let lastError = "Unable to get an answer from Gemini. Please check your API key and quota.";
 
   for (const model of modelsToTry) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
@@ -72,6 +73,7 @@ async function callGemini(systemPrompt, userPrompt) {
         const err = await res.json().catch(() => ({}));
         const msg = err?.error?.message || `HTTP ${res.status}`;
         console.error(`Gemini error for ${model} (${res.status}):`, msg);
+        lastError = `Gemini API error (${res.status}): ${msg}`;
         continue;
       }
 
@@ -85,10 +87,11 @@ async function callGemini(systemPrompt, userPrompt) {
       return answer;
     } catch (err) {
       console.error(`Error calling ${model}:`, err.message);
+      lastError = err.message;
     }
   }
 
-  throw new Error("Unable to get an answer from Gemini. Please check your API key and quota.");
+  throw new Error(lastError);
 }
 
 // Lazy initialization — cached across warm serverless invocations
