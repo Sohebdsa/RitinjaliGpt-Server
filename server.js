@@ -37,13 +37,49 @@ app.get("/", (req, res) => {
   });
 });
 
-const GEMINI_MODELS = [
-  "gemini-1.5-flash",
+const FALLBACK_MODELS = [
+  "gemini-3.6-flash",
+  "gemini-3.5-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-2.5-flash",
   "gemini-2.0-flash",
-  "gemini-1.5-pro",
 ];
 
-let activeModel = "gemini-1.5-flash";
+let activeModel = null;
+let cachedModelList = null;
+
+async function getAvailableModels(apiKey) {
+  if (cachedModelList && cachedModelList.length > 0) return cachedModelList;
+
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`
+    );
+    if (res.ok) {
+      const data = await res.json();
+      const valid = (data.models || [])
+        .filter((m) => m.supportedGenerationMethods?.includes("generateContent"))
+        .map((m) => m.name.replace(/^models\//, ""))
+        .filter((name) => !name.includes("embedding") && !name.includes("aqa"));
+
+      if (valid.length > 0) {
+        // Prioritize Gemini 3.6, 3.5, 2.5
+        valid.sort((a, b) => {
+          const aPriority = a.includes("3.6") ? 4 : a.includes("3.5") ? 3 : a.includes("2.5") ? 2 : 1;
+          const bPriority = b.includes("3.6") ? 4 : b.includes("3.5") ? 3 : b.includes("2.5") ? 2 : 1;
+          return bPriority - aPriority;
+        });
+        console.log("Discovered models from Google API:", valid);
+        cachedModelList = valid;
+        return valid;
+      }
+    }
+  } catch (err) {
+    console.warn("Could not query ListModels:", err.message);
+  }
+
+  return FALLBACK_MODELS;
+}
 
 async function callGemini(systemPrompt, userPrompt) {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -53,7 +89,11 @@ async function callGemini(systemPrompt, userPrompt) {
     );
   }
 
-  const modelsToTry = [activeModel, ...GEMINI_MODELS.filter((m) => m !== activeModel)];
+  const availableModels = await getAvailableModels(apiKey);
+  const modelsToTry = activeModel
+    ? [activeModel, ...availableModels.filter((m) => m !== activeModel)]
+    : availableModels;
+
   let lastError = "Unable to get an answer from Gemini. Please check your API key and quota.";
 
   for (const model of modelsToTry) {
@@ -84,6 +124,7 @@ async function callGemini(systemPrompt, userPrompt) {
       }
 
       activeModel = model;
+      console.log(`Active model set to: ${model}`);
       return answer;
     } catch (err) {
       console.error(`Error calling ${model}:`, err.message);
