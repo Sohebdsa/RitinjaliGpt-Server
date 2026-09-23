@@ -1,68 +1,70 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const path = require("path");
 const { loadAndChunkPDF } = require("./pdfLoader");
 const { initSearch, indexChunks, searchChunks } = require("./search");
 
-const { GEMINI_API_KEY, PORT = 5001, PDF_PATH, FRONTEND_URL } = process.env;
+const { GEMINI_API_KEY, PORT = 5001 } = process.env;
 
-if (!GEMINI_API_KEY) {
-  console.error("GEMINI_API_KEY is missing in .env");
-  process.exit(1);
-}
-if (!PDF_PATH) {
-  console.error("PDF_PATH is missing in .env");
-  process.exit(1);
-}
+const PDF_PATH = process.env.PDF_PATH
+  ? (path.isAbsolute(process.env.PDF_PATH)
+      ? process.env.PDF_PATH
+      : path.join(__dirname, process.env.PDF_PATH))
+  : path.join(__dirname, "manual", "Ritinjali_User_manual_v2.pdf");
 
 const app = express();
 
-const allowedOrigins = (FRONTEND_URL || "")
-  .split(",")
-  .map((o) => o.trim())
-  .filter(Boolean);
+// Universal CORS configuration - allows any origin (Vercel preview, production, localhost)
+app.use(
+  cors({
+    origin: true,
+    credentials: true,
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+  })
+);
 
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin) return callback(null, true);
-    if (
-      allowedOrigins.includes("*") ||
-      allowedOrigins.includes(origin) ||
-      origin.startsWith("https://ritinjali-gpt-ui.vercel.app/ ||
-      origin.startsWith("http://127.0.0.1")
-    ) {
-      return callback(null, true);
-    }
-    callback(new Error("Not allowed by CORS"));
-  },
-  methods: ["GET", "POST"],
-}));
-
+app.options("*", cors());
 app.use(express.json());
 
-// Gemini models to try in order (newest first)
+// Root test route
+app.get("/", (req, res) => {
+  res.json({
+    status: "ok",
+    message: "Ritinjali Chatbot API is operational",
+    apiKeyConfigured: Boolean(process.env.GEMINI_API_KEY),
+  });
+});
+
 const GEMINI_MODELS = [
+  "gemini-2.5-flash",
+  "gemini-1.5-flash",
   "gemini-3.6-flash",
   "gemini-3.5-flash-lite",
   "gemini-3.5-flash",
-  "gemini-2.5-flash",
 ];
 
 let activeModel = null;
 
 async function callGemini(systemPrompt, userPrompt) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "GEMINI_API_KEY is not set. Please add it to your environment variables."
+    );
+  }
+
   const modelsToTry = activeModel ? [activeModel] : GEMINI_MODELS;
 
   for (const model of modelsToTry) {
     const urls = [
-      `https://generativelanguage.googleapis.com/v1/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1/models/${model}:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
     ];
 
     for (const url of urls) {
       const version = url.includes("/v1beta/") ? "v1beta" : "v1";
-      console.log(`Trying ${model} (${version})...`);
-
       try {
         const res = await fetch(url, {
           method: "POST",
@@ -78,7 +80,7 @@ async function callGemini(systemPrompt, userPrompt) {
           const err = await res.json().catch(() => ({}));
           const msg = err?.error?.message || `HTTP ${res.status}`;
           if (res.status === 404 || res.status === 400) {
-            console.log(`  Skipping ${model}: ${msg.substring(0, 80)}`);
+            console.log(`Skipping ${model}: ${msg.substring(0, 80)}`);
             break;
           }
           throw new Error(msg);
@@ -92,36 +94,55 @@ async function callGemini(systemPrompt, userPrompt) {
           activeModel = model;
           console.log(`Active model: ${model} (${version})`);
         }
-
         return answer;
       } catch (err) {
         if (!err.message.startsWith("HTTP") && !err.message.includes("model")) throw err;
-        console.log(`  Error: ${err.message.substring(0, 80)}`);
+        console.log(`Error with ${model}: ${err.message.substring(0, 80)}`);
       }
     }
   }
 
-  throw new Error(
-    "No Gemini model available. Check your API key at https://aistudio.google.com/app/apikey"
-  );
+  throw new Error("No Gemini model available for this API key.");
 }
 
-// Lazy initialization — runs once on first request, cached for warm invocations
+// Lazy initialization — cached across warm serverless invocations
 let initialized = false;
+let initError = null;
 
 async function ensureInitialized() {
   if (initialized) return;
-  console.log("Initializing: loading and indexing PDF...");
-  initSearch();
-  const chunks = await loadAndChunkPDF(PDF_PATH);
-  await indexChunks(chunks);
-  initialized = true;
-  console.log("Ready.");
+  if (initError) throw initError;
+
+  try {
+    console.log("Loading and indexing PDF...");
+    initSearch();
+    const chunks = await loadAndChunkPDF(PDF_PATH);
+    await indexChunks(chunks);
+    initialized = true;
+    console.log("Ready. Indexed chunks:", chunks.length);
+  } catch (err) {
+    initError = err;
+    console.error("Initialization error:", err);
+    throw err;
+  }
 }
 
 app.get("/api/health", async (req, res) => {
-  await ensureInitialized();
-  res.json({ status: "ok", port: PORT, model: activeModel || "detecting" });
+  try {
+    await ensureInitialized();
+    res.json({
+      status: "ok",
+      model: activeModel || "detecting",
+      apiKeyConfigured: Boolean(process.env.GEMINI_API_KEY),
+    });
+  } catch (err) {
+    console.error("Health check error:", err.message);
+    res.status(500).json({
+      status: "error",
+      message: err.message,
+      apiKeyConfigured: Boolean(process.env.GEMINI_API_KEY),
+    });
+  }
 });
 
 app.post("/api/chat", async (req, res) => {
@@ -129,6 +150,13 @@ app.post("/api/chat", async (req, res) => {
 
   if (!question || typeof question !== "string" || !question.trim()) {
     return res.status(400).json({ error: "Question is required." });
+  }
+
+  if (!process.env.GEMINI_API_KEY) {
+    return res.status(500).json({
+      error:
+        "GEMINI_API_KEY is not configured on the server. Please add it in your Vercel Project Settings > Environment Variables.",
+    });
   }
 
   try {
@@ -151,29 +179,37 @@ ${context}`;
       .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.text}`)
       .join("\n");
 
-    const userPrompt = historyText
-      ? `${historyText}\nUser: ${question}`
-      : question;
+    const userPrompt = historyText ? `${historyText}\nUser: ${question}` : question;
 
     const answer = await callGemini(systemPrompt, userPrompt);
     res.json({ answer });
   } catch (err) {
     console.error("Chat error:", err.message);
-    res.status(500).json({ error: "Something went wrong. Please try again." });
+    res.status(500).json({ error: err.message || "Something went wrong. Please try again." });
   }
 });
 
-// Local development
+// Express global error handler
+app.use((err, req, res, next) => {
+  console.error("Unhandled error:", err);
+  res.status(500).json({ error: err.message || "Internal server error" });
+});
+
+// Local development server
 if (require.main === module) {
-  ensureInitialized().then(() => {
-    app.listen(PORT, () => {
-      console.log(`Server running on http://localhost:${PORT}`);
+  if (!GEMINI_API_KEY) {
+    console.warn("WARNING: GEMINI_API_KEY is not set in .env");
+  }
+  ensureInitialized()
+    .then(() => {
+      app.listen(PORT, () =>
+        console.log(`Server running on http://localhost:${PORT}`)
+      );
+    })
+    .catch((err) => {
+      console.error("Failed to start locally:", err.message);
+      process.exit(1);
     });
-  }).catch((err) => {
-    console.error("Failed to start:", err.message);
-    process.exit(1);
-  });
 }
 
-// Vercel serverless export
 module.exports = app;

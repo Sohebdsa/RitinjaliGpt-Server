@@ -3,10 +3,24 @@ const path = require("path");
 const pdfParse = require("pdf-parse");
 
 async function loadAndChunkPDF(pdfPath) {
-  const resolvedPath = path.resolve(pdfPath);
+  const candidatePaths = [
+    pdfPath,
+    path.isAbsolute(pdfPath) ? pdfPath : path.join(__dirname, pdfPath),
+    path.join(__dirname, "manual", "Ritinjali_User_manual_v2.pdf"),
+    path.join(process.cwd(), "manual", "Ritinjali_User_manual_v2.pdf"),
+    path.join(process.cwd(), "server", "manual", "Ritinjali_User_manual_v2.pdf"),
+  ];
 
-  if (!fs.existsSync(resolvedPath)) {
-    throw new Error(`PDF not found at: ${resolvedPath}`);
+  let resolvedPath = null;
+  for (const candidate of candidatePaths) {
+    if (candidate && fs.existsSync(candidate)) {
+      resolvedPath = candidate;
+      break;
+    }
+  }
+
+  if (!resolvedPath) {
+    throw new Error(`PDF not found. Checked locations: ${candidatePaths.filter(Boolean).join(", ")}`);
   }
 
   console.log(`Loading PDF: ${resolvedPath}`);
