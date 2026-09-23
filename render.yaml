@@ -2,7 +2,7 @@ services:
   - type: web
     name: ritinjali-chatbot-api
     env: node
-    region: india 
+    region: Singapore 
     plan: free
     buildCommand: npm install
     startCommand: node server.js
