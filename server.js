@@ -28,7 +28,7 @@ app.use(cors({
     if (
       allowedOrigins.includes("*") ||
       allowedOrigins.includes(origin) ||
-      origin.startsWith("http://localhost") ||
+      origin.startsWith("https://ritinjali-gpt-server.vercel.app") ||
       origin.startsWith("http://127.0.0.1")
     ) {
       return callback(null, true);
